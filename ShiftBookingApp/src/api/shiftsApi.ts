@@ -8,7 +8,7 @@ import { Shift } from '../types/shift';
 export const BASE_URL =
   Platform.OS === 'android'
     ? 'http://10.0.2.2:8080'
-    : 'http://localhost:8080';
+    : 'http://127.0.0.1:8080';
 
 /**
  * Fetch all available shifts from the API.
@@ -35,6 +35,9 @@ export async function bookShift(id: string): Promise<Shift> {
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');
+    // Add this line to print the exact server rejection to your browser console:
+    console.error("BOOKING FAILED:", response.status, errorBody); 
+    
     throw new Error(
       errorBody || `Failed to book shift: ${response.status} ${response.statusText}`,
     );

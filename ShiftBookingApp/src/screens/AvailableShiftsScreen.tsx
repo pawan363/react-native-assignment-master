@@ -14,7 +14,7 @@ import ShiftSectionHeader from '../components/ShiftSectionHeader';
 import AreaFilter from '../components/AreaFilter';
 import EmptyState from '../components/EmptyState';
 import { Shift, ShiftSection } from '../types/shift';
-
+import { Alert } from 'react-native';
 /**
  * "Available Shifts" screen — lists all shifts filtered by selected area.
  * Shifts can be booked or cancelled from this view.
@@ -42,6 +42,12 @@ export default function AvailableShiftsScreen() {
     () => groupShiftsByDate(filteredShifts),
     [filteredShifts],
   );
+
+  React.useEffect(() => {
+  if (error && shifts.length > 0) {
+    Alert.alert('Booking Failed', error);
+  }
+}, [error, shifts.length]);
 
   const renderItem = useCallback(
     ({ item }: { item: Shift }) => (
