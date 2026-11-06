@@ -1,37 +1,31 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { colors } from '../theme/colors';
 
 interface EmptyStateProps {
   message: string;
 }
 
-/**
- * Centered empty-state placeholder shown when there are no shifts to display.
- */
-const EmptyState: React.FC<EmptyStateProps> = ({ message }) => (
-  <View style={styles.container}>
-    <Text style={styles.emoji}>📋</Text>
-    <Text style={styles.message}>{message}</Text>
-  </View>
-);
+export const EmptyState: React.FC<EmptyStateProps> = ({ message }) => {
+  return (
+    <View style={styles.container}>
+      <Text style={styles.messageText}>{message}</Text>
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    paddingVertical: 60,
+    paddingHorizontal: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 80,
-    paddingHorizontal: 32,
   },
-  emoji: {
-    fontSize: 48,
-    marginBottom: 16,
-  },
-  message: {
+  messageText: {
     fontSize: 16,
-    color: '#999999',
+    color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 22,
+    lineHeight: 24,
   },
 });
 

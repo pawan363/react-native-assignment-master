@@ -5,37 +5,43 @@ import React, {
   useCallback,
   useEffect,
   useMemo,
+  useState,
   ReactNode,
 } from 'react';
-import { Shift, Area } from '../types/shift';
+import { Shift, City, ShiftWithStatus, ShiftSection, ActionStatus } from '../types/shift';
 import * as api from '../api/shiftsApi';
+import { isOverlappingWithBooked, groupShiftsByDate } from '../utils/dateUtils';
 
 // ---------------------------------------------------------------------------
-// State
+// State Shape
 // ---------------------------------------------------------------------------
 
-interface ShiftState {
+export type RequestStatus = 'idle' | 'loading' | 'succeeded' | 'failed';
+
+export interface ShiftState {
   shifts: Shift[];
-  loading: boolean;
+  status: RequestStatus;
   error: string | null;
-  /** IDs of shifts currently being booked / cancelled (per-shift spinners). */
-  loadingShiftIds: string[];
-  selectedArea: Area;
+  /** Map of shift ID -> 'booking' | 'cancelling' */
+  pending: Record<string, ActionStatus>;
+  selectedCity: City;
+  lastActionError: string | null;
 }
 
-const initialState: ShiftState = {
+export const initialShiftState: ShiftState = {
   shifts: [],
-  loading: false,
+  status: 'idle',
   error: null,
-  loadingShiftIds: [],
-  selectedArea: 'Helsinki',
+  pending: {},
+  selectedCity: 'Helsinki',
+  lastActionError: null,
 };
 
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
-type ShiftAction =
+export type ShiftAction =
   | { type: 'FETCH_SHIFTS_START' }
   | { type: 'FETCH_SHIFTS_SUCCESS'; payload: Shift[] }
   | { type: 'FETCH_SHIFTS_ERROR'; payload: string }
@@ -45,88 +51,108 @@ type ShiftAction =
   | { type: 'CANCEL_SHIFT_START'; payload: string }
   | { type: 'CANCEL_SHIFT_SUCCESS'; payload: Shift }
   | { type: 'CANCEL_SHIFT_ERROR'; payload: { id: string; error: string } }
-  | { type: 'SET_AREA'; payload: Area };
+  | { type: 'SET_CITY'; payload: City }
+  | { type: 'CLEAR_ACTION_ERROR' };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Pure Reducer (Exported for unit testing)
 // ---------------------------------------------------------------------------
 
-/** Add a shift id to the loading list. */
-function addLoadingId(ids: string[], id: string): string[] {
-  return ids.includes(id) ? ids : [...ids, id];
-}
-
-/** Remove a shift id from the loading list. */
-function removeLoadingId(ids: string[], id: string): string[] {
-  return ids.filter((i) => i !== id);
-}
-
-/** Replace a single shift in the shifts array by matching id. */
-function replaceShift(shifts: Shift[], updated: Shift): Shift[] {
-  return shifts.map((s) => (s.id === updated.id ? updated : s));
-}
-
-// ---------------------------------------------------------------------------
-// Reducer
-// ---------------------------------------------------------------------------
-
-function shiftReducer(state: ShiftState, action: ShiftAction): ShiftState {
+export function shiftReducer(state: ShiftState, action: ShiftAction): ShiftState {
   switch (action.type) {
-    // ---- Fetch all shifts ----
     case 'FETCH_SHIFTS_START':
-      return { ...state, loading: true, error: null };
+      return {
+        ...state,
+        status: 'loading',
+        error: null,
+      };
 
     case 'FETCH_SHIFTS_SUCCESS':
-      return { ...state, loading: false, shifts: action.payload };
+      return {
+        ...state,
+        status: 'succeeded',
+        shifts: action.payload,
+        error: null,
+      };
 
     case 'FETCH_SHIFTS_ERROR':
-      return { ...state, loading: false, error: action.payload };
-
-    // ---- Book a shift ----
-    case 'BOOK_SHIFT_START':
       return {
         ...state,
-        loadingShiftIds: addLoadingId(state.loadingShiftIds, action.payload),
+        status: 'failed',
+        error: action.payload,
       };
 
-    case 'BOOK_SHIFT_SUCCESS':
+    case 'BOOK_SHIFT_START': {
+      // Ignore tap if already pending
+      if (state.pending[action.payload]) {
+        return state;
+      }
       return {
         ...state,
-        shifts: replaceShift(state.shifts, action.payload),
-        loadingShiftIds: removeLoadingId(state.loadingShiftIds, action.payload.id),
+        pending: { ...state.pending, [action.payload]: 'booking' },
+        lastActionError: null,
       };
+    }
 
-    case 'BOOK_SHIFT_ERROR':
+    case 'BOOK_SHIFT_SUCCESS': {
+      const { [action.payload.id]: _, ...restPending } = state.pending;
       return {
         ...state,
-        loadingShiftIds: removeLoadingId(state.loadingShiftIds, action.payload.id),
-        error: action.payload.error,
+        shifts: state.shifts.map((s) => (s.id === action.payload.id ? action.payload : s)),
+        pending: restPending,
       };
+    }
 
-    // ---- Cancel a shift ----
-    case 'CANCEL_SHIFT_START':
+    case 'BOOK_SHIFT_ERROR': {
+      const { [action.payload.id]: _, ...restPending } = state.pending;
       return {
         ...state,
-        loadingShiftIds: addLoadingId(state.loadingShiftIds, action.payload),
+        pending: restPending,
+        lastActionError: action.payload.error,
       };
+    }
 
-    case 'CANCEL_SHIFT_SUCCESS':
+    case 'CANCEL_SHIFT_START': {
+      // Ignore tap if already pending
+      if (state.pending[action.payload]) {
+        return state;
+      }
       return {
         ...state,
-        shifts: replaceShift(state.shifts, action.payload),
-        loadingShiftIds: removeLoadingId(state.loadingShiftIds, action.payload.id),
+        pending: { ...state.pending, [action.payload]: 'cancelling' },
+        lastActionError: null,
       };
+    }
 
-    case 'CANCEL_SHIFT_ERROR':
+    case 'CANCEL_SHIFT_SUCCESS': {
+      const { [action.payload.id]: _, ...restPending } = state.pending;
       return {
         ...state,
-        loadingShiftIds: removeLoadingId(state.loadingShiftIds, action.payload.id),
-        error: action.payload.error,
+        shifts: state.shifts.map((s) => (s.id === action.payload.id ? action.payload : s)),
+        pending: restPending,
+      };
+    }
+
+    case 'CANCEL_SHIFT_ERROR': {
+      const { [action.payload.id]: _, ...restPending } = state.pending;
+      return {
+        ...state,
+        pending: restPending,
+        lastActionError: action.payload.error,
+      };
+    }
+
+    case 'SET_CITY':
+      return {
+        ...state,
+        selectedCity: action.payload,
       };
 
-    // ---- Area filter ----
-    case 'SET_AREA':
-      return { ...state, selectedArea: action.payload };
+    case 'CLEAR_ACTION_ERROR':
+      return {
+        ...state,
+        lastActionError: null,
+      };
 
     default:
       return state;
@@ -134,103 +160,208 @@ function shiftReducer(state: ShiftState, action: ShiftAction): ShiftState {
 }
 
 // ---------------------------------------------------------------------------
-// Context
+// Pure Selectors (Exported for unit testing)
+// ---------------------------------------------------------------------------
+
+/** Booked shifts grouped by day, with count and total hours */
+export function selectBookedSections(
+  shifts: Shift[],
+  pending: Record<string, ActionStatus>,
+  now: number,
+): ShiftSection[] {
+  const bookedShifts: ShiftWithStatus[] = shifts
+    .filter((s) => s.booked)
+    .map((s) => ({
+      ...s,
+      isStarted: now >= s.startTime,
+      isFinished: now >= s.endTime,
+      isOverlapping: false,
+      pendingStatus: pending[s.id] || 'idle',
+    }));
+
+  return groupShiftsByDate(bookedShifts, now);
+}
+
+/** Available shifts for a city, grouped by day, each flagged started, booked or overlapping */
+export function selectAvailableSections(
+  shifts: Shift[],
+  city: City,
+  pending: Record<string, ActionStatus>,
+  now: number,
+): ShiftSection[] {
+  // Pre-filter booked shifts once to optimize overlap checks
+  const bookedShifts = shifts.filter((s) => s.booked);
+  // Available shifts shows only shifts whose endTime is in the future
+  const filtered = shifts.filter((s) => s.area === city && s.endTime > now);
+
+  const decorated: ShiftWithStatus[] = filtered.map((s) => ({
+    ...s,
+    isStarted: now >= s.startTime,
+    isFinished: now >= s.endTime,
+    isOverlapping: isOverlappingWithBooked(s, bookedShifts),
+    pendingStatus: pending[s.id] || 'idle',
+  }));
+
+  return groupShiftsByDate(decorated, now);
+}
+
+/** Shift counts per city for the tab labels (shows shifts from now onwards where endTime > now) */
+export function selectCityCounts(shifts: Shift[], now: number): Record<City, number> {
+  const counts: Record<City, number> = {
+    Helsinki: 0,
+    Tampere: 0,
+    Turku: 0,
+  };
+
+  for (const s of shifts) {
+    if (s.endTime > now && (s.area === 'Helsinki' || s.area === 'Tampere' || s.area === 'Turku')) {
+      counts[s.area as City]++;
+    }
+  }
+
+  return counts;
+}
+
+// ---------------------------------------------------------------------------
+// Context & Provider
 // ---------------------------------------------------------------------------
 
 interface ShiftContextValue extends ShiftState {
+  now: number;
+  bookedSections: ShiftSection[];
+  availableSections: ShiftSection[];
+  cityCounts: Record<City, number>;
   fetchShifts: () => Promise<void>;
   bookShift: (id: string) => Promise<void>;
   cancelShift: (id: string) => Promise<void>;
-  setSelectedArea: (area: Area) => void;
+  setSelectedCity: (city: City) => void;
+  clearActionError: () => void;
 }
 
 const ShiftContext = createContext<ShiftContextValue | undefined>(undefined);
 
-// ---------------------------------------------------------------------------
-// Provider
-// ---------------------------------------------------------------------------
+export function ShiftProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(shiftReducer, initialShiftState);
+  const [now, setNow] = useState(Date.now());
 
-interface ShiftProviderProps {
-  children: ReactNode;
-}
-
-export function ShiftProvider({ children }: ShiftProviderProps) {
-  const [state, dispatch] = useReducer(shiftReducer, initialState);
-
-  // ---- Action creators (memoised) ----
+  // Minute tick to keep `now` fresh so shifts disable right when they start
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchShifts = useCallback(async () => {
     dispatch({ type: 'FETCH_SHIFTS_START' });
     try {
-      const shifts = await api.fetchShifts();
-      dispatch({ type: 'FETCH_SHIFTS_SUCCESS', payload: shifts });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch shifts';
-      dispatch({ type: 'FETCH_SHIFTS_ERROR', payload: message });
+      const data = await api.fetchShifts();
+      dispatch({ type: 'FETCH_SHIFTS_SUCCESS', payload: data });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to fetch shifts';
+      dispatch({ type: 'FETCH_SHIFTS_ERROR', payload: msg });
     }
   }, []);
 
-  const bookShift = useCallback(async (id: string) => {
-    dispatch({ type: 'BOOK_SHIFT_START', payload: id });
-    try {
-      const updated = await api.bookShift(id);
-      dispatch({ type: 'BOOK_SHIFT_SUCCESS', payload: updated });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to book shift';
-      dispatch({ type: 'BOOK_SHIFT_ERROR', payload: { id, error: message } });
-    }
+  const bookShift = useCallback(
+    async (id: string) => {
+      if (state.pending[id]) return; // prevent double tap
+      dispatch({ type: 'BOOK_SHIFT_START', payload: id });
+      try {
+        const updated = await api.bookShift(id);
+        dispatch({ type: 'BOOK_SHIFT_SUCCESS', payload: updated });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to book shift';
+        dispatch({ type: 'BOOK_SHIFT_ERROR', payload: { id, error: msg } });
+      }
+    },
+    [state.pending],
+  );
+
+  const cancelShift = useCallback(
+    async (id: string) => {
+      if (state.pending[id]) return; // prevent double tap
+      dispatch({ type: 'CANCEL_SHIFT_START', payload: id });
+      try {
+        const updated = await api.cancelShift(id);
+        dispatch({ type: 'CANCEL_SHIFT_SUCCESS', payload: updated });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to cancel shift';
+        dispatch({ type: 'CANCEL_SHIFT_ERROR', payload: { id, error: msg } });
+      }
+    },
+    [state.pending],
+  );
+
+  const setSelectedCity = useCallback((city: City) => {
+    dispatch({ type: 'SET_CITY', payload: city });
   }, []);
 
-  const cancelShift = useCallback(async (id: string) => {
-    dispatch({ type: 'CANCEL_SHIFT_START', payload: id });
-    try {
-      const updated = await api.cancelShift(id);
-      dispatch({ type: 'CANCEL_SHIFT_SUCCESS', payload: updated });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to cancel shift';
-      dispatch({ type: 'CANCEL_SHIFT_ERROR', payload: { id, error: message } });
-    }
+  const clearActionError = useCallback(() => {
+    dispatch({ type: 'CLEAR_ACTION_ERROR' });
   }, []);
 
-  const setSelectedArea = useCallback((area: Area) => {
-    dispatch({ type: 'SET_AREA', payload: area });
-  }, []);
-
-  // Auto-fetch shifts on mount
+  // Fetch initial shifts
   useEffect(() => {
     fetchShifts();
   }, [fetchShifts]);
 
-  // ---- Memoised context value ----
+  // Auto-dismiss last action error after 4 seconds
+  useEffect(() => {
+    if (state.lastActionError) {
+      const timer = setTimeout(() => {
+        dispatch({ type: 'CLEAR_ACTION_ERROR' });
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [state.lastActionError]);
+
+  // Derived memoized data using selectors
+  const bookedSections = useMemo(
+    () => selectBookedSections(state.shifts, state.pending, now),
+    [state.shifts, state.pending, now],
+  );
+
+  const availableSections = useMemo(
+    () => selectAvailableSections(state.shifts, state.selectedCity, state.pending, now),
+    [state.shifts, state.selectedCity, state.pending, now],
+  );
+
+  const cityCounts = useMemo(() => selectCityCounts(state.shifts, now), [state.shifts, now]);
 
   const value = useMemo<ShiftContextValue>(
     () => ({
       ...state,
+      now,
+      bookedSections,
+      availableSections,
+      cityCounts,
       fetchShifts,
       bookShift,
       cancelShift,
-      setSelectedArea,
+      setSelectedCity,
+      clearActionError,
     }),
-    [state, fetchShifts, bookShift, cancelShift, setSelectedArea],
+    [
+      state,
+      now,
+      bookedSections,
+      availableSections,
+      cityCounts,
+      fetchShifts,
+      bookShift,
+      cancelShift,
+      setSelectedCity,
+      clearActionError,
+    ],
   );
 
-  return (
-    <ShiftContext.Provider value={value}>
-      {children}
-    </ShiftContext.Provider>
-  );
+  return <ShiftContext.Provider value={value}>{children}</ShiftContext.Provider>;
 }
 
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-/**
- * Consume the ShiftContext. Must be called inside a <ShiftProvider>.
- */
 export function useShiftContext(): ShiftContextValue {
   const context = useContext(ShiftContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useShiftContext must be used within a ShiftProvider');
   }
   return context;

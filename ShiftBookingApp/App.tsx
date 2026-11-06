@@ -1,86 +1,80 @@
 import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { ShiftProvider } from './src/store/ShiftContext';
 import MyShiftsScreen from './src/screens/MyShiftsScreen';
 import AvailableShiftsScreen from './src/screens/AvailableShiftsScreen';
+import { colors } from './src/theme/colors';
 
 const Tab = createBottomTabNavigator();
 
-/**
- * Simple icon component for the tab bar using emoji/text.
- */
-function TabIcon({ label, focused }: { label: string; focused: boolean }) {
-  return (
-    <Text style={{ fontSize: 20, opacity: focused ? 1 : 0.5 }}>{label}</Text>
-  );
-}
-
 export default function App() {
   return (
-    <ShiftProvider>
-      <NavigationContainer>
-        <StatusBar style="dark" />
-        <Tab.Navigator
-          screenOptions={{
-            tabBarActiveTintColor: '#4CAF50',
-            tabBarInactiveTintColor: '#999999',
-            tabBarStyle: styles.tabBar,
-            tabBarLabelStyle: styles.tabLabel,
-            headerStyle: styles.header,
-            headerTitleStyle: styles.headerTitle,
-            headerTitleAlign: 'center',
-          }}
-        >
-          <Tab.Screen
-            name="MyShifts"
-            component={MyShiftsScreen}
-            options={{
-              title: 'My Shifts',
-              tabBarIcon: ({ focused }) => (
-                <TabIcon label="📅" focused={focused} />
-              ),
+    <SafeAreaProvider>
+      <ShiftProvider>
+        <NavigationContainer>
+          <StatusBar style="dark" />
+          <Tab.Navigator
+            initialRouteName="MyShifts"
+            screenOptions={{
+              tabBarActiveTintColor: colors.primary,
+              tabBarInactiveTintColor: colors.textSecondary,
+              tabBarStyle: styles.tabBar,
+              tabBarLabelStyle: styles.tabLabel,
+              tabBarIcon: () => null, // Design spec shows text-only tabs or simple links
+              headerStyle: styles.header,
+              headerTitleStyle: styles.headerTitle,
+              headerTitleAlign: 'left',
             }}
-          />
-          <Tab.Screen
-            name="AvailableShifts"
-            component={AvailableShiftsScreen}
-            options={{
-              title: 'Available Shifts',
-              tabBarIcon: ({ focused }) => (
-                <TabIcon label="🔍" focused={focused} />
-              ),
-            }}
-          />
-        </Tab.Navigator>
-      </NavigationContainer>
-    </ShiftProvider>
+          >
+            <Tab.Screen
+              name="MyShifts"
+              component={MyShiftsScreen}
+              options={{
+                title: 'My shifts',
+              }}
+            />
+            <Tab.Screen
+              name="AvailableShifts"
+              component={AvailableShiftsScreen}
+              options={{
+                title: 'Available shifts',
+              }}
+            />
+          </Tab.Navigator>
+        </NavigationContainer>
+      </ShiftProvider>
+    </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.cardBackground,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#E0E0E0',
-    paddingBottom: 6,
-    paddingTop: 6,
-    height: 60,
+    borderTopColor: colors.border,
+    height: 56,
+    paddingBottom: 4,
   },
   tabLabel: {
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '600',
+    marginBottom: 14,
   },
   header: {
-    backgroundColor: '#4CAF50',
+    backgroundColor: colors.cardBackground,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
     elevation: 0,
     shadowOpacity: 0,
   },
   headerTitle: {
-    color: '#FFFFFF',
+    color: colors.textDark,
     fontWeight: '700',
     fontSize: 18,
+    marginLeft: 8,
   },
 });

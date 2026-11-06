@@ -1,119 +1,131 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   RefreshControl,
   SectionList,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useShiftContext } from '../store/ShiftContext';
-import { groupShiftsByDate } from '../utils/dateUtils';
-import ShiftCard from '../components/ShiftCard';
-import ShiftSectionHeader from '../components/ShiftSectionHeader';
-import AreaFilter from '../components/AreaFilter';
+import { ShiftWithStatus, ShiftSection } from '../types/shift';
+import ShiftRow from '../components/ShiftRow';
+import DateHeader from '../components/DateHeader';
+import CityTabs from '../components/CityTabs';
 import EmptyState from '../components/EmptyState';
-import { Shift, ShiftSection } from '../types/shift';
-import { Alert } from 'react-native';
-/**
- * "Available Shifts" screen — lists all shifts filtered by selected area.
- * Shifts can be booked or cancelled from this view.
- */
+import { colors } from '../theme/colors';
+
 export default function AvailableShiftsScreen() {
   const {
-    shifts,
-    loading,
+    availableSections,
+    selectedCity,
+    cityCounts,
+    status,
     error,
-    loadingShiftIds,
-    selectedArea,
     bookShift,
     cancelShift,
-    setSelectedArea,
+    setSelectedCity,
     fetchShifts,
+    lastActionError,
+    clearActionError,
   } = useShiftContext();
 
-  // Filter shifts by selected area
-  const filteredShifts = useMemo(
-    () => shifts.filter((s) => s.area === selectedArea),
-    [shifts, selectedArea],
-  );
-
-  const sections: ShiftSection[] = useMemo(
-    () => groupShiftsByDate(filteredShifts),
-    [filteredShifts],
-  );
-
-  React.useEffect(() => {
-  if (error && shifts.length > 0) {
-    Alert.alert('Booking Failed', error);
-  }
-}, [error, shifts.length]);
+  const isInitialLoading = status === 'loading' && availableSections.length === 0;
+  const isRefreshing = status === 'loading' && availableSections.length > 0;
 
   const renderItem = useCallback(
-    ({ item }: { item: Shift }) => (
-      <ShiftCard
+    ({ item }: { item: ShiftWithStatus }) => (
+      <ShiftRow
         shift={item}
         onBook={bookShift}
         onCancel={cancelShift}
-        isLoading={loadingShiftIds.includes(item.id)}
+        showArea={false}
       />
     ),
-    [bookShift, cancelShift, loadingShiftIds],
+    [bookShift, cancelShift],
   );
 
   const renderSectionHeader = useCallback(
     ({ section }: { section: ShiftSection }) => (
-      <ShiftSectionHeader title={section.title} count={section.data.length} />
+      <DateHeader
+        title={section.title}
+        count={section.shiftCount}
+        totalHours={section.totalHours}
+      />
     ),
     [],
   );
 
-  const renderEmpty = useCallback(
-    () =>
-      loading ? null : (
-        <EmptyState message={`No shifts available in ${selectedArea}.`} />
-      ),
-    [loading, selectedArea],
-  );
+  const renderEmpty = useCallback(() => {
+    if (status === 'loading') {
+      return null;
+    }
+    return <EmptyState message={`No available shifts in ${selectedCity}.`} />;
+  }, [status, selectedCity]);
 
-  const keyExtractor = useCallback((item: Shift) => item.id, []);
-
-  if (loading && shifts.length === 0) {
+  if (isInitialLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading shifts…</Text>
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
-  if (error && shifts.length === 0) {
+  if (status === 'failed' && availableSections.length === 0) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>⚠️ {error}</Text>
+      <View style={styles.centerContainer}>
+        <Text style={styles.errorText}>{error || 'Failed to load shifts'}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={fetchShifts}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <AreaFilter selectedArea={selectedArea} onSelectArea={setSelectedArea} />
+      <CityTabs
+        selectedCity={selectedCity}
+        counts={cityCounts}
+        onSelectCity={setSelectedCity}
+      />
+
+      {lastActionError && (
+        <TouchableOpacity
+          style={styles.actionErrorBanner}
+          onPress={clearActionError}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.actionErrorText}>{lastActionError} (tap to dismiss)</Text>
+        </TouchableOpacity>
+      )}
+
       <SectionList
-        sections={sections}
-        keyExtractor={keyExtractor}
+        sections={availableSections}
+        keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader as any}
+        renderSectionHeader={renderSectionHeader}
         ListEmptyComponent={renderEmpty}
         contentContainerStyle={
-          sections.length === 0 ? styles.emptyContainer : styles.list
+          availableSections.length === 0 ? styles.emptyListContent : styles.listContent
         }
-        stickySectionHeadersEnabled
+        stickySectionHeadersEnabled={false}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS !== 'web'}
         refreshControl={
           <RefreshControl
-            refreshing={loading}
+            refreshing={isRefreshing}
             onRefresh={fetchShifts}
-            colors={['#4CAF50']}
-            tintColor="#4CAF50"
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
       />
@@ -124,29 +136,50 @@ export default function AvailableShiftsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: colors.background,
   },
-  list: {
-    paddingBottom: 20,
+  listContent: {
+    paddingBottom: 24,
   },
-  emptyContainer: {
+  emptyListContent: {
     flexGrow: 1,
+    justifyContent: 'center',
   },
-  centered: {
+  centerContainer: {
     flex: 1,
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F5F5F5',
-    padding: 32,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#888888',
+    padding: 24,
   },
   errorText: {
     fontSize: 15,
-    color: '#F44336',
+    color: colors.redPrimary,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  actionErrorBanner: {
+    backgroundColor: '#FFE5EC',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.redBorder,
+  },
+  actionErrorText: {
+    color: colors.redPrimary,
+    fontSize: 13,
+    fontWeight: '500',
     textAlign: 'center',
   },
 });

@@ -1,99 +1,115 @@
 import React, { useCallback } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   RefreshControl,
   SectionList,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { useShiftContext } from '../store/ShiftContext';
-import { groupShiftsByDate } from '../utils/dateUtils';
-import ShiftCard from '../components/ShiftCard';
-import ShiftSectionHeader from '../components/ShiftSectionHeader';
+import { ShiftWithStatus, ShiftSection } from '../types/shift';
+import ShiftRow from '../components/ShiftRow';
+import DateHeader from '../components/DateHeader';
 import EmptyState from '../components/EmptyState';
-import { Shift, ShiftSection } from '../types/shift';
+import { colors } from '../theme/colors';
 
-/**
- * "My Shifts" screen — lists all booked shifts, grouped by date.
- * Shifts can be cancelled from this view.
- */
 export default function MyShiftsScreen() {
-  const { shifts, loading, error, loadingShiftIds, cancelShift, fetchShifts } =
-    useShiftContext();
+  const {
+    bookedSections,
+    status,
+    error,
+    cancelShift,
+    fetchShifts,
+    lastActionError,
+    clearActionError,
+  } = useShiftContext();
 
-  // Filter only booked shifts
-  const bookedShifts = shifts.filter((s) => s.booked);
-  const sections: ShiftSection[] = groupShiftsByDate(bookedShifts);
-
-  const handleBook = useCallback(() => {
-    // No-op: cannot book from My Shifts screen
-  }, []);
+  const isInitialLoading = status === 'loading' && bookedSections.length === 0;
+  const isRefreshing = status === 'loading' && bookedSections.length > 0;
 
   const renderItem = useCallback(
-    ({ item }: { item: Shift }) => (
-      <ShiftCard
-        shift={item}
-        onBook={handleBook}
-        onCancel={cancelShift}
-        isLoading={loadingShiftIds.includes(item.id)}
-      />
+    ({ item }: { item: ShiftWithStatus }) => (
+      <ShiftRow shift={item} onCancel={cancelShift} showArea={true} />
     ),
-    [cancelShift, loadingShiftIds, handleBook],
+    [cancelShift],
   );
 
   const renderSectionHeader = useCallback(
     ({ section }: { section: ShiftSection }) => (
-      <ShiftSectionHeader title={section.title} count={section.data.length} />
+      <DateHeader
+        title={section.title}
+        count={section.shiftCount}
+        totalHours={section.totalHours}
+      />
     ),
     [],
   );
 
-  const renderEmpty = useCallback(
-    () =>
-      loading ? null : (
-        <EmptyState message="No booked shifts yet. Head over to Available Shifts to book some!" />
-      ),
-    [loading],
-  );
+  const renderEmpty = useCallback(() => {
+    if (status === 'loading') {
+      return null;
+    }
+    return <EmptyState message="You haven't booked any shifts yet." />;
+  }, [status]);
 
-  const keyExtractor = useCallback((item: Shift) => item.id, []);
-
-  if (loading && shifts.length === 0) {
+  if (isInitialLoading) {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Loading shifts…</Text>
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
-  if (error && shifts.length === 0) {
+  if (status === 'failed' && bookedSections.length === 0) {
     return (
-      <View style={styles.centered}>
-        <Text style={styles.errorText}>⚠️ {error}</Text>
+      <View style={styles.centerContainer}>
+        <Text style={styles.errorText}>{error || 'Failed to load shifts'}</Text>
+        <TouchableOpacity
+          style={styles.retryButton}
+          onPress={fetchShifts}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.retryButtonText}>Retry</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      {lastActionError && (
+        <TouchableOpacity
+          style={styles.actionErrorBanner}
+          onPress={clearActionError}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.actionErrorText}>{lastActionError} (tap to dismiss)</Text>
+        </TouchableOpacity>
+      )}
+
       <SectionList
-        sections={sections}
-        keyExtractor={keyExtractor}
+        sections={bookedSections}
+        keyExtractor={(item) => item.id}
         renderItem={renderItem}
-        renderSectionHeader={renderSectionHeader as any}
+        renderSectionHeader={renderSectionHeader}
         ListEmptyComponent={renderEmpty}
         contentContainerStyle={
-          sections.length === 0 ? styles.emptyContainer : styles.list
+          bookedSections.length === 0 ? styles.emptyListContent : styles.listContent
         }
-        stickySectionHeadersEnabled
+        stickySectionHeadersEnabled={false}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS !== 'web'}
         refreshControl={
           <RefreshControl
-            refreshing={loading}
+            refreshing={isRefreshing}
             onRefresh={fetchShifts}
-            colors={['#4CAF50']}
-            tintColor="#4CAF50"
+            tintColor={colors.primary}
+            colors={[colors.primary]}
           />
         }
       />
@@ -104,29 +120,50 @@ export default function MyShiftsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: colors.background,
   },
-  list: {
-    paddingBottom: 20,
+  listContent: {
+    paddingBottom: 24,
   },
-  emptyContainer: {
+  emptyListContent: {
     flexGrow: 1,
+    justifyContent: 'center',
   },
-  centered: {
+  centerContainer: {
     flex: 1,
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#F5F5F5',
-    padding: 32,
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#888888',
+    padding: 24,
   },
   errorText: {
     fontSize: 15,
-    color: '#F44336',
+    color: colors.redPrimary,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  actionErrorBanner: {
+    backgroundColor: '#FFE5EC',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.redBorder,
+  },
+  actionErrorText: {
+    color: colors.redPrimary,
+    fontSize: 13,
+    fontWeight: '500',
     textAlign: 'center',
   },
 });
